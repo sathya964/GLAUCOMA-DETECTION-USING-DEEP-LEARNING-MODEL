@@ -1,4 +1,8 @@
-const API_BASE = "http://127.0.0.1:5000";
+// The glaucoma model runs right in the browser with TensorFlow.js.
+// Convert outputs/best_model.keras into public/model/ (see README) for this to work.
+const MODEL_URL = "/model/model.json";
+const IMG_SIZE = 224;
+const HISTORY_KEY = "clearsight-history";
 
 // ---------- View switching ----------
 const navLinks = document.querySelectorAll(".nav-link");
@@ -45,22 +49,90 @@ function handleFile(file) {
   ringFill.style.stroke = "#2EC4B6";
   ringFill.style.strokeDashoffset = 628;
 
-  const formData = new FormData();
-  formData.append("image", file);
-
-  fetch(`${API_BASE}/api/predict`, { method: "POST", body: formData })
-    .then(res => {
-      if (!res.ok) throw new Error("Prediction failed");
-      return res.json();
-    })
+  analyzeImage(file)
     .then(data => showResult(data))
     .catch(err => {
       portLoading.hidden = true;
       portIdle.hidden = false;
       previewImg.hidden = true;
-      alert("Something went wrong analyzing that image. Make sure the backend server (app.py) is running.");
+      alert(err.userMessage || "Something went wrong analyzing that image. Please try a different JPG or PNG fundus photo.");
       console.error(err);
     });
+}
+
+// ---------- Model ----------
+let modelPromise = null;
+
+function loadModel() {
+  if (!modelPromise) {
+    modelPromise = fetch(MODEL_URL)
+      .then(res => {
+        if (!res.ok) {
+          const err = new Error(`Model not found at ${MODEL_URL} (HTTP ${res.status})`);
+          err.userMessage = "The AI model hasn't been added to this site yet. Convert best_model.keras to TensorFlow.js and put it in public/model/ (see the README).";
+          throw err;
+        }
+        return res.json();
+      })
+      .then(json => json.format === "graph-model" ? tf.loadGraphModel(MODEL_URL) : tf.loadLayersModel(MODEL_URL))
+      .catch(err => { modelPromise = null; throw err; });
+  }
+  return modelPromise;
+}
+
+function readImage(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => {
+      const err = new Error("Could not read image");
+      err.userMessage = "That file couldn't be read as an image. Please upload a JPG or PNG.";
+      reject(err);
+    };
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+async function analyzeImage(file) {
+  const [model, img] = await Promise.all([loadModel(), readImage(file)]);
+
+  // Same preprocessing as app.py: resize to 224x224 (nearest, like Keras load_img) and scale to 0-1.
+  const input = tf.tidy(() =>
+    tf.image.resizeNearestNeighbor(tf.browser.fromPixels(img, 3), [IMG_SIZE, IMG_SIZE])
+      .toFloat().div(255).expandDims(0)
+  );
+  let output = model.predict(input);
+  if (Array.isArray(output)) output = output[0];
+  const rawScore = (await output.data())[0];
+  input.dispose();
+  output.dispose();
+
+  const isGlaucoma = rawScore >= 0.5;
+  const glaucomaConfidencePct = round1(rawScore * 100);
+
+  const result = {
+    id: crypto.randomUUID(),
+    prediction: isGlaucoma ? "Glaucoma indicators detected" : "No glaucoma indicators detected",
+    is_glaucoma: isGlaucoma,
+    confidence_pct: round1((isGlaucoma ? rawScore : 1 - rawScore) * 100),
+    glaucoma_confidence_pct: glaucomaConfidencePct,
+    severity: getSeverity(glaucomaConfidencePct),
+    filename: file.name,
+  };
+
+  saveToHistory(result);
+  return result;
+}
+
+function round1(n) {
+  return Math.round(n * 10) / 10;
+}
+
+function getSeverity(confidencePct) {
+  if (confidencePct < 30) return { label: "Low risk", action: "No immediate concern. A routine yearly eye checkup is still recommended.", level: 1 };
+  if (confidencePct < 60) return { label: "Moderate - Monitor", action: "Consider seeing an eye doctor within 1-3 months.", level: 2 };
+  if (confidencePct < 85) return { label: "High concern", action: "Recommended to see an eye doctor within 2-4 weeks.", level: 3 };
+  return { label: "Urgent", action: "Please see an eye doctor as soon as possible.", level: 4 };
 }
 
 const severityColors = { 1: "#2EC4B6", 2: "#FFB627", 3: "#FF6B4A", 4: "#E63946" };
@@ -90,12 +162,27 @@ function showResult(data) {
   window._lastResult = data;
 }
 
-// ---------- History ----------
+// ---------- History (kept in this browser) ----------
+function getHistory() {
+  try {
+    return JSON.parse(sessionStorage.getItem(HISTORY_KEY)) || [];
+  } catch {
+    return [];
+  }
+}
+
+function saveToHistory(result) {
+  sessionStorage.setItem(HISTORY_KEY, JSON.stringify([result, ...getHistory()]));
+}
+
 function loadHistory() {
-  fetch(`${API_BASE}/api/history`)
-    .then(res => res.json())
-    .then(items => renderHistory(items))
-    .catch(err => console.error(err));
+  renderHistory(getHistory());
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
 }
 
 function renderHistory(items) {
@@ -117,13 +204,13 @@ function renderHistory(items) {
         </div>
       </div>
       <p>${item.severity.label}</p>
-      <span>${item.filename}</span>
+      <span>${escapeHtml(item.filename)}</span>
     `;
     grid.appendChild(card);
   });
 }
 
-// ---------- Chat (UI shell — wiring comes in next phase) ----------
+// ---------- Chat ----------
 const chatToggle = document.getElementById("chatToggle");
 const chatPanel = document.getElementById("chatPanel");
 const chatClose = document.getElementById("chatClose");
@@ -154,7 +241,7 @@ function sendChat() {
     ? `${window._lastResult.prediction}, ${window._lastResult.confidence_pct}% confidence, severity: ${window._lastResult.severity.label}`
     : null;
 
-  fetch(`${API_BASE}/api/chat`, {
+  fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message: text, result_context: resultContext }),

@@ -1,0 +1,11 @@
+{
+  "name": "clearsight",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@google/genai": "^1.0.0"
+  },
+  "devDependencies": {
+    "@netlify/functions": "^5.0.0"
+  }
+}

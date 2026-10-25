@@ -6,7 +6,7 @@
 <title>ClearSight — Retinal Glaucoma Screening</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
 
@@ -127,7 +127,7 @@
   </div>
   <div id="chatBody" class="chat-body">
     <div class="chat-msg chat-msg-bot">
-      Hi — I can explain terms like IOP or cup-to-disc ratio, or talk through what a result might mean. Assistant wiring is coming in the next build step, so this is a preview panel for now.
+      Hi — I can explain terms like IOP or cup-to-disc ratio, or talk through what a result might mean. What would you like to know?
     </div>
   </div>
   <div class="chat-input-row">
@@ -136,6 +136,7 @@
   </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/script.js') }}"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+<script src="/js/script.js"></script>
 </body>
 </html>
